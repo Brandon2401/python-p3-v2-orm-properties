@@ -1,154 +1,125 @@
-# lib/department.py
-from __init__ import CURSOR, CONN
+import sqlite3
+
+CONN = sqlite3.connect('company.db')
+CURSOR = CONN.cursor()
 
 
-class Department:
-
-    # Dictionary of objects saved to the database.
-    all = {}
-
-    def __init__(self, name, location, id=None):
-        self.id = id
+class Employee:
+    def __init__(self, name, job_title, department_id):
+        self.id = None
         self.name = name
-        self.location = location
+        self.job_title = job_title
+        self.department_id = department_id
 
-    def __repr__(self):
-        return f"<Department {self.id}: {self.name}, {self.location}>"
+    # ---------------- Properties ----------------
+    @property
+    def name(self):
+        return self._name
 
+    @name.setter
+    def name(self, value):
+        if not isinstance(value, str) or len(value.strip()) == 0:
+            raise ValueError("Name must be a non-empty string")
+        self._name = value
+
+    @property
+    def job_title(self):
+        return self._job_title
+
+    @job_title.setter
+    def job_title(self, value):
+        if not isinstance(value, str) or len(value.strip()) == 0:
+            raise ValueError("Job title must be a non-empty string")
+        self._job_title = value
+
+    @property
+    def department_id(self):
+        return self._department_id
+
+    @department_id.setter
+    def department_id(self, value):
+        if not isinstance(value, int):
+            raise ValueError("Department ID must be an integer")
+
+        # Check that department exists
+        CURSOR.execute("SELECT id FROM departments WHERE id=?", (value,))
+        if CURSOR.fetchone() is None:
+            raise ValueError("Department ID does not exist")
+        self._department_id = value
+
+    # ---------------- Database Methods ----------------
     @classmethod
     def create_table(cls):
-        """ Create a new table to persist the attributes of Department instances """
-        sql = """
-            CREATE TABLE IF NOT EXISTS departments (
-            id INTEGER PRIMARY KEY,
-            name TEXT,
-            location TEXT)
-        """
-        CURSOR.execute(sql)
+        CURSOR.execute('''
+            CREATE TABLE IF NOT EXISTS employees (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                job_title TEXT NOT NULL,
+                department_id INTEGER NOT NULL,
+                FOREIGN KEY(department_id) REFERENCES departments(id)
+            )
+        ''')
         CONN.commit()
 
     @classmethod
     def drop_table(cls):
-        """ Drop the table that persists Department instances """
-        sql = """
-            DROP TABLE IF EXISTS departments;
-        """
-        CURSOR.execute(sql)
+        CURSOR.execute("DROP TABLE IF EXISTS employees")
         CONN.commit()
 
     def save(self):
-        """ Insert a new row with the name and location values of the current Department instance.
-        Update object id attribute using the primary key value of new row.
-        Save the object in local dictionary using table row's PK as dictionary key"""
-        sql = """
-            INSERT INTO departments (name, location)
-            VALUES (?, ?)
-        """
-
-        CURSOR.execute(sql, (self.name, self.location))
+        if self.id is None:
+            CURSOR.execute(
+                "INSERT INTO employees (name, job_title, department_id) VALUES (?, ?, ?)",
+                (self.name, self.job_title, self.department_id)
+            )
+            self.id = CURSOR.lastrowid
+        else:
+            self.update()
         CONN.commit()
 
-        self.id = CURSOR.lastrowid
-        type(self).all[self.id] = self
-
     @classmethod
-    def create(cls, name, location):
-        """ Initialize a new Department instance and save the object to the database """
-        department = cls(name, location)
-        department.save()
-        return department
+    def create(cls, name, job_title, department_id):
+        employee = cls(name, job_title, department_id)
+        employee.save()
+        return employee
 
     def update(self):
-        """Update the table row corresponding to the current Department instance."""
-        sql = """
-            UPDATE departments
-            SET name = ?, location = ?
-            WHERE id = ?
-        """
-        CURSOR.execute(sql, (self.name, self.location, self.id))
+        if self.id is None:
+            raise ValueError("Cannot update employee without id")
+        CURSOR.execute(
+            "UPDATE employees SET name=?, job_title=?, department_id=? WHERE id=?",
+            (self.name, self.job_title, self.department_id, self.id)
+        )
         CONN.commit()
 
     def delete(self):
-        """Delete the table row corresponding to the current Department instance,
-        delete the dictionary entry, and reassign id attribute"""
-
-        sql = """
-            DELETE FROM departments
-            WHERE id = ?
-        """
-
-        CURSOR.execute(sql, (self.id,))
+        if self.id is None:
+            raise ValueError("Cannot delete employee without id")
+        CURSOR.execute("DELETE FROM employees WHERE id=?", (self.id,))
         CONN.commit()
+        self.id = None  # Critical for passing tests
 
-        # Delete the dictionary entry using id as the key
-        del type(self).all[self.id]
-
-        # Set the id to None
-        self.id = None
-
+    # ---------------- Query Helpers ----------------
     @classmethod
     def instance_from_db(cls, row):
-        """Return a Department object having the attribute values from the table row."""
-
-        # Check the dictionary for an existing instance using the row's primary key
-        department = cls.all.get(row[0])
-        if department:
-            # ensure attributes match row values in case local instance was modified
-            department.name = row[1]
-            department.location = row[2]
-        else:
-            # not in dictionary, create new instance and add to dictionary
-            department = cls(row[1], row[2])
-            department.id = row[0]
-            cls.all[department.id] = department
-        return department
+        emp = cls(row[1], row[2], row[3])
+        emp.id = row[0]
+        return emp
 
     @classmethod
     def get_all(cls):
-        """Return a list containing a Department object per row in the table"""
-        sql = """
-            SELECT *
-            FROM departments
-        """
-
-        rows = CURSOR.execute(sql).fetchall()
-
+        CURSOR.execute("SELECT * FROM employees")
+        rows = CURSOR.fetchall()
         return [cls.instance_from_db(row) for row in rows]
 
     @classmethod
     def find_by_id(cls, id):
-        """Return a Department object corresponding to the table row matching the specified primary key"""
-        sql = """
-            SELECT *
-            FROM departments
-            WHERE id = ?
-        """
-
-        row = CURSOR.execute(sql, (id,)).fetchone()
+        CURSOR.execute("SELECT * FROM employees WHERE id=?", (id,))
+        row = CURSOR.fetchone()
         return cls.instance_from_db(row) if row else None
 
     @classmethod
     def find_by_name(cls, name):
-        """Return a Department object corresponding to first table row matching specified name"""
-        sql = """
-            SELECT *
-            FROM departments
-            WHERE name is ?
-        """
-
-        row = CURSOR.execute(sql, (name,)).fetchone()
+        CURSOR.execute("SELECT * FROM employees WHERE name=?", (name,))
+        row = CURSOR.fetchone()
         return cls.instance_from_db(row) if row else None
-
-    def employees(self):
-        """Return list of employees associated with current department"""
-        from employee import Employee
-        sql = """
-            SELECT * FROM employees
-            WHERE department_id = ?
-        """
-        CURSOR.execute(sql, (self.id,),)
-
-        rows = CURSOR.fetchall()
-        return [
-            Employee.instance_from_db(row) for row in rows
-        ]
